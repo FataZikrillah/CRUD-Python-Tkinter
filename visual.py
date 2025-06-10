@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 from tkinter import messagebox
+import sqlite3
 
 class StudentApp:
     def __init__(self, root):
@@ -9,11 +10,26 @@ class StudentApp:
         self.root.geometry("600x400")
         self.root.configure(bg='white')
         
-        # Penyimpanan data dan ID counter
-        self.students = []
-        self.current_id = 1
+        # Inisialisasi database
+        self.initialize_database()
         
         self.create_widgets()
+        self.load_data()
+    
+    def initialize_database(self):
+        """Membuat koneksi database dan tabel jika belum ada"""
+        self.conn = sqlite3.connect('students.db')
+        self.cursor = self.conn.cursor()
+        
+        # Buat tabel jika belum ada
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS students (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                nim TEXT NOT NULL UNIQUE
+            )
+        ''')
+        self.conn.commit()
     
     def create_widgets(self):
         # Frame utama
@@ -94,6 +110,20 @@ class StudentApp:
         # Mengikat event pemilihan
         self.tree.bind('<<TreeviewSelect>>', self.on_select)
     
+    def load_data(self):
+        """Memuat data dari database ke treeview"""
+        # Kosongkan treeview terlebih dahulu
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        
+        # Ambil data dari database
+        self.cursor.execute("SELECT id, name, nim FROM students ORDER BY id")
+        rows = self.cursor.fetchall()
+        
+        # Masukkan data ke treeview
+        for row in rows:
+            self.tree.insert('', 'end', values=row)
+    
     def tambah_data(self):
         name_val = self.name_entry.get().strip()
         nim_val = self.nim_entry.get().strip()
@@ -103,15 +133,18 @@ class StudentApp:
             messagebox.showwarning("Peringatan", "Nama dan NIM harus diisi!")
             return
         
-        # Generate ID otomatis
-        id_val = str(self.current_id)
-        
-        # Menambahkan ke data
-        self.students.append((id_val, name_val, nim_val))
-        self.tree.insert('', 'end', values=(id_val, name_val, nim_val))
-        self.clear_entries()
-        self.current_id += 1  # Increment ID untuk data berikutnya
-        messagebox.showinfo("Sukses", "Data berhasil ditambahkan!")
+        try:
+            # Tambahkan ke database
+            self.cursor.execute("INSERT INTO students (name, nim) VALUES (?, ?)", 
+                              (name_val, nim_val))
+            self.conn.commit()
+            
+            # Muat ulang data
+            self.load_data()
+            self.clear_entries()
+            messagebox.showinfo("Sukses", "Data berhasil ditambahkan!")
+        except sqlite3.IntegrityError:
+            messagebox.showerror("Error", "NIM sudah terdaftar!")
     
     def update_data(self):
         selected = self.tree.selection()
@@ -127,21 +160,22 @@ class StudentApp:
             messagebox.showwarning("Peringatan", "Nama dan NIM harus diisi!")
             return
         
-        # Memperbarui data
+        # Ambil ID dari data yang dipilih
         item = selected[0]
-        old_values = self.tree.item(item, 'values')
-        id_val = old_values[0]  # Menggunakan ID yang sudah ada
+        id_val = self.tree.item(item, 'values')[0]
         
-        # Memperbarui dalam penyimpanan
-        for i, student in enumerate(self.students):
-            if student[0] == id_val:
-                self.students[i] = (id_val, name_val, nim_val)
-                break
-        
-        # Memperbarui dalam treeview
-        self.tree.item(item, values=(id_val, name_val, nim_val))
-        self.clear_entries()
-        messagebox.showinfo("Sukses", "Data berhasil diupdate!")
+        try:
+            # Update data di database
+            self.cursor.execute("UPDATE students SET name=?, nim=? WHERE id=?", 
+                              (name_val, nim_val, id_val))
+            self.conn.commit()
+            
+            # Muat ulang data
+            self.load_data()
+            self.clear_entries()
+            messagebox.showinfo("Sukses", "Data berhasil diupdate!")
+        except sqlite3.IntegrityError:
+            messagebox.showerror("Error", "NIM sudah terdaftar!")
     
     def hapus_data(self):
         selected = self.tree.selection()
@@ -150,14 +184,16 @@ class StudentApp:
             return
         
         if messagebox.askyesno("Konfirmasi", "Yakin ingin menghapus data ini?"):
+            # Ambil ID dari data yang dipilih
             item = selected[0]
-            values = self.tree.item(item, 'values')
+            id_val = self.tree.item(item, 'values')[0]
             
-            # Menghapus dari penyimpanan
-            self.students = [s for s in self.students if s[0] != values[0]]
+            # Hapus dari database
+            self.cursor.execute("DELETE FROM students WHERE id=?", (id_val,))
+            self.conn.commit()
             
-            # Menghapus dari treeview
-            self.tree.delete(item)
+            # Muat ulang data
+            self.load_data()
             self.clear_entries()
             messagebox.showinfo("Sukses", "Data berhasil dihapus!")
     
@@ -182,6 +218,11 @@ class StudentApp:
         self.id_entry.configure(state='readonly')
         self.name_entry.delete(0, tk.END)
         self.nim_entry.delete(0, tk.END)
+    
+    def __del__(self):
+        """Menutup koneksi database ketika aplikasi ditutup"""
+        if hasattr(self, 'conn'):
+            self.conn.close()
 
 if __name__ == "__main__":
     root = tk.Tk()
